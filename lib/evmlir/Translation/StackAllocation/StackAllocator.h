@@ -1,3 +1,4 @@
+#pragma once
 
 #include "../Analysis/InterferenceGraph.h"
 #include "mlir/IR/Value.h"

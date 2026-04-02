@@ -1,3 +1,4 @@
+#pragma once
 
 #include "LivenessInfo.h"
 #include "mlir/Analysis/Liveness.h"

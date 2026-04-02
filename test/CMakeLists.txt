@@ -18,3 +18,5 @@ add_lit_testsuite(check-evmlir "Running the evmlir regression tests"
 set_target_properties(check-evmlir PROPERTIES FOLDER "Tests")
 
 add_lit_testsuites(EVMLIR ${CMAKE_CURRENT_SOURCE_DIR} DEPENDS ${EVMLIR_TEST_DEPENDS})
+
+add_subdirectory(Translation)

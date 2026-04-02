@@ -1,3 +1,4 @@
+#pragma once
 
 #include "mlir/Analysis/Liveness.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"

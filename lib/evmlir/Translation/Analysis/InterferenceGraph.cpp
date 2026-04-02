@@ -1,5 +1,6 @@
 
 #include "InterferenceGraph.h"
+#include <iostream>
 
 InterferenceGraph::InterferenceGraph(LivenessInfo &livenessInfo,
                                      mlir::func::FuncOp func)
@@ -7,19 +8,22 @@ InterferenceGraph::InterferenceGraph(LivenessInfo &livenessInfo,
 
   for (auto &block : llvm::reverse(func.getBlocks())) {
     auto liveNow = livenessInfo.getLiveOut(&block);
+    std::cout << "Processing block with " << liveNow.size()
+              << " live-out values\n";
     for (auto &op : llvm::reverse(block.getOperations())) {
+      for (auto operand : op.getOperands()) {
+        liveNow.insert(operand);
+      }
       for (auto result : op.getResults()) {
         for (auto live : liveNow) {
+          if (live == result)
+            continue;
           adjacency[result].insert(live);
           adjacency[live].insert(result);
         }
       }
       for (auto result : op.getResults()) {
         liveNow.erase(result);
-      }
-
-      for (auto operand : op.getOperands()) {
-        liveNow.insert(operand);
       }
     }
 
@@ -28,6 +32,7 @@ InterferenceGraph::InterferenceGraph(LivenessInfo &livenessInfo,
         adjacency[arg].insert(live);
         adjacency[live].insert(arg);
       }
+      liveNow.erase(arg);
     }
   }
 }

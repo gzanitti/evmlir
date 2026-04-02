@@ -7,6 +7,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED YES)
 set(LLVM_EXTERNAL_LIT "/usr/local/bin/lit")
 
 find_package(MLIR REQUIRED CONFIG)
+find_package(GTest REQUIRED)
+enable_testing()
 
 message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
