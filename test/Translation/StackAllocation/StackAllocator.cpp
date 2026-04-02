@@ -8,7 +8,6 @@ static mlir::DenseMap<mlir::Value, unsigned>
 runAllocation(mlir::func::FuncOp fn, LivenessInfo **livenessOut = nullptr,
               InterferenceGraph **graphOut = nullptr,
               StackAllocator **allocOut = nullptr) {
-  // Objects are heap-allocated so callers can inspect them after the call.
   auto *liveness = new LivenessInfo(fn);
   auto *graph = new InterferenceGraph(*liveness, fn);
   auto *alloc = new StackAllocator(*graph);
