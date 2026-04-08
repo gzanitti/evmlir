@@ -3,7 +3,7 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include <cassert>
-mlir::DenseMap<mlir::Value, unsigned> StackAllocator::run() {
+mlir::DenseMap<mlir::Value, ValueLocation> StackAllocator::run() {
   while (!graph.empty()) {
     mlir::Value toRemove;
     for (auto &value : graph.getValues()) {
@@ -18,7 +18,8 @@ mlir::DenseMap<mlir::Value, unsigned> StackAllocator::run() {
       toRemove = lower_spill_cost();
       assert(toRemove &&
              "lower_spill_cost returned empty value on non-empty graph");
-      spilledValues.insert(toRemove);
+      assignment[toRemove] = SpilledLoc{memAllocator.allocate()};
+      ;
     }
 
     // Snapshot current neighbors before removal: these are exactly the
@@ -34,14 +35,17 @@ mlir::DenseMap<mlir::Value, unsigned> StackAllocator::run() {
     mlir::DenseSet<unsigned> usedColors;
     for (auto neighbor : neighborSnapshot[value]) {
       auto it = assignment.find(neighbor);
-      if (it != assignment.end())
-        usedColors.insert(it->second);
+      if (it == assignment.end())
+        continue;
+
+      if (auto *stackLoc = std::get_if<StackLoc>(&it->second))
+        usedColors.insert(stackLoc->position);
     }
 
-    unsigned assignedColor = 0;
+    uint8_t assignedColor = 0;
     while (usedColors.count(assignedColor))
       assignedColor++;
-    assignment[value] = assignedColor;
+    assignment[value] = StackLoc{assignedColor};
   }
 
   return assignment;
@@ -49,22 +53,31 @@ mlir::DenseMap<mlir::Value, unsigned> StackAllocator::run() {
 
 unsigned StackAllocator::spill_cost(mlir::Value v) const {
   return graph.useCount(v) / graph.neighbors(v)->size();
-  // TODO: better heuristic
 }
 
-mlir::Value StackAllocator::lower_spill_cost() const {
+mlir::Value StackAllocator::lower_spill_cost() {
+  llvm::DenseSet<mlir::Value> currentStack;
+  for (auto &[value, loc] : assignment)
+    if (std::holds_alternative<StackLoc>(loc))
+      currentStack.insert(value);
+
   mlir::Value lowestCostValue;
   unsigned lowestCost = std::numeric_limits<unsigned>::max();
-
   for (auto &value : graph.getValues()) {
-    if (spilledValues.count(value))
+    if (assignment.count(value))
       continue;
-
     unsigned cost = spill_cost(value);
     if (cost < lowestCost) {
       lowestCost = cost;
       lowestCostValue = value;
     }
+  }
+
+  auto recomputed = costModel.recomputeCost(lowestCostValue, currentStack);
+  if (recomputed && *recomputed < costModel.spillMemoryCost()) {
+    assignment[lowestCostValue] = RecomputeLoc{lowestCostValue.getDefiningOp()};
+  } else {
+    assignment[lowestCostValue] = SpilledLoc{memAllocator.allocate()};
   }
 
   return lowestCostValue;

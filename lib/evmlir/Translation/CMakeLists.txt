@@ -3,6 +3,9 @@ add_mlir_library(EVMTranslation
   Analysis/LivenessInfo.cpp
   Analysis/InterferenceGraph.cpp
   StackAllocation/StackAllocator.cpp
+  CodeGen/OsakaSpec.cpp
+  CodeGen/OpcodeMapper.cpp
+  CodeGen/EVMCostModel.cpp
   CodeGen/EVMEmitter.cpp
 
   DEPENDS

@@ -27,6 +27,102 @@ def EVM_Dialect : Dialect {
 class EVM_Op<string mnemonic, list<Trait> traits = []>
     : Op<EVM_Dialect, mnemonic, traits>;
 
+def EVM_InlineBytecodeOp : EVM_Op<"inline_bytecode", 
+    [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+    let summary = "Emit raw bytecode directly into the output stream.";
+    let description = [{
+        Emits the given bytes directly into the bytecode output without any
+        stack scheduling or validation. The caller is responsible for ensuring
+        the bytecode is valid and that the stack state is consistent before
+        and after this op. This is an escape hatch for cases where the SSA
+        model is insufficient.
+    }];
+    let arguments = (ins DenseI8ArrayAttr:$bytecode);
+    let results = (outs); 
+}
+
+def EVM_StopOp : EVM_Op<"stop", [Terminator]> {
+  let summary = "Halt execution successfully.";
+  let description = [{
+    Halts execution of the current call and marks it as successful.
+    No return data is provided to the caller.
+  }];
+
+  let assemblyFormat = "attr-dict";
+}
+
+def EVM_AddmodOp : EVM_Op<"addmod", [Pure, AlwaysSpeculatable]> {
+  let summary = "Compute (x + y) mod k.";
+  let description = [{
+    Computes (x + y) mod k, where x, y, and k are treated as unsigned 256-bit integers.
+    If k is zero, the result is defined to be zero.
+  }];
+
+  let arguments = (ins I256:$x, I256:$y, I256:$k);
+  let results = (outs I256:$result);
+
+  let assemblyFormat = "$x `,` $y `,` $k attr-dict `:` type($x) `,` type($y) `,` type($k) `->` type($result)";
+}
+
+def EVM_MulmodOp : EVM_Op<"mulmod", [Pure, AlwaysSpeculatable]> {
+  let summary = "Compute (x * y) mod k.";
+  let description = [{
+    Computes (x * y) mod k, where x, y, and k are treated as unsigned 256-bit integers.
+    If k is zero, the result is defined to be zero.
+  }];
+
+  let arguments = (ins I256:$x, I256:$y, I256:$k);
+  let results = (outs I256:$result);
+
+  let assemblyFormat = "$x `,` $y `,` $k attr-dict `:` type($x) `,` type($y) `,` type($k) `->` type($result)";
+}
+
+def EVM_ExpOp : EVM_Op<"exp", [Pure, AlwaysSpeculatable]> {
+  let summary = "Exponentiation.";
+  let description = [{
+    Computes base raised to the power of exponent, where both are treated as unsigned 
+    256-bit integers. The result is computed modulo 2^256. If exponent is zero, the 
+    result is 1 regardless of the value of base, including when base is zero.
+  }];
+
+  let arguments = (ins I256:$x, I256:$y);
+  let results = (outs I256:$result);
+
+  let assemblyFormat = "$x `,` $y attr-dict `:` type($x) `,` type($y) `->` type($result)";
+}
+
+def EVM_SignextendOp : EVM_Op<"signextend", [Pure, AlwaysSpeculatable]> {
+  let summary = "Sign-extend a byte to a 256-bit integer.";
+  let description = [{
+    Sign-extends x treating it as a signed integer whose sign bit is at byte position 
+    byte counting from the LSB, where byte=0 means x is treated as an 8-bit signed 
+    integer, byte=1 as a 16-bit signed integer, and so on up to byte=30 for a 248-bit 
+    signed integer. If byte >= 31, x is returned unchanged. The upper bits of the 
+    result are filled with the sign bit at position byte.
+    The result is a signed 256-bit integer.
+  }];
+
+  let arguments = (ins I256:$byte, I256:$x);
+  let results = (outs I256:$result);
+
+  let assemblyFormat = "$byte `,` $x attr-dict `:` type($byte) `,` type($x) `->` type($result)";
+}	
+
+def EVM_ByteOp : EVM_Op<"byte", [Pure, AlwaysSpeculatable]> {
+  let summary = "Extract a byte from a 256-bit integer.";
+  let description = [{
+    Extracts the byte at position `index` from `x`, where `index`=0 means the least
+    significant byte and `index`=31 means the most significant byte. If `index` >= 32,
+    the result is zero. The result is an i256 containing the extracted byte in its least
+    significant 8 bits, with the upper bits set to zero.
+  }];
+
+  let arguments = (ins I256:$index, I256:$x);
+  let results = (outs I256:$result);
+
+  let assemblyFormat = "$index `,` $x attr-dict `:` type($index) `,` type($x) `->` type($result)";
+}
+
 def EVM_SloadOp : EVM_Op<"sload",
     [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Read a value from persistent contract storage.";
@@ -148,7 +244,7 @@ def EVM_McopyOp : EVM_Op<"mcopy", [DeclareOpInterfaceMethods<MemoryEffectsOpInte
   let assemblyFormat = "$dest_offset `,` $source_offset `,` $length attr-dict `:` type($dest_offset) `,` type($source_offset) `,` type($length)";
 }
 
-def EVM_CalldataLoadOp : EVM_Op<"calldataload", [Pure, AlwaysSpeculatable]> {
+def EVM_CalldataloadOp : EVM_Op<"calldataload", [Pure, AlwaysSpeculatable]> {
   let summary = "Read a 32-byte word from calldata at the given byte offset.";
   let description = [{
     Reads from the calldata region starting at `offset`.
@@ -162,7 +258,7 @@ def EVM_CalldataLoadOp : EVM_Op<"calldataload", [Pure, AlwaysSpeculatable]> {
   let assemblyFormat = "$offset attr-dict `:` type($offset) `->` type($result)";
 }
 
-def EVM_CalldataSizeOp : EVM_Op<"calldatasize",
+def EVM_CalldatasizeOp : EVM_Op<"calldatasize",
     [Pure, AlwaysSpeculatable]> {
   let summary = "Return the size of the calldata in bytes.";
   let description = [{
@@ -175,7 +271,7 @@ def EVM_CalldataSizeOp : EVM_Op<"calldatasize",
   let assemblyFormat = "attr-dict `->` type($result)";
 }
 
-def EVM_CalldataCopyOp : EVM_Op<"calldatacopy", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+def EVM_CalldatacopyOp : EVM_Op<"calldatacopy", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "Copy a region of calldata into memory.";
   let description = [{
     Copies `length` bytes from calldata starting at `calldata_offset` into the
@@ -213,7 +309,7 @@ def EVM_CallerOp : EVM_Op<"caller", [Pure, AlwaysSpeculatable]> {
   let assemblyFormat = "attr-dict `->` type($result)";
 }
 
-def EVM_CallValueOp : EVM_Op<"callvalue", [Pure, AlwaysSpeculatable]> {
+def EVM_CallvalueOp : EVM_Op<"callvalue", [Pure, AlwaysSpeculatable]> {
   let summary = "Return the amount of Ether sent with the call.";
   let description = [{
     Returns the amount of Ether (in wei) sent with the current call.
@@ -383,7 +479,7 @@ def EVM_BasefeeOp : EVM_Op<"basefee", [Pure, AlwaysSpeculatable]> {
   let assemblyFormat = "attr-dict `->` type($result)";
 }
 
-def EVM_prevrandaoOp : EVM_Op<"prevrandao", [Pure, AlwaysSpeculatable]> {
+def EVM_PrevrandaoOp : EVM_Op<"prevrandao", [Pure, AlwaysSpeculatable]> {
   let summary = "Return the current block's prevRandao value.";
   let description = [{
     Returns the prevRandao value of the current block (EIP-4399).
@@ -407,7 +503,7 @@ def EVM_ChainidOp : EVM_Op<"chainid", [Pure, AlwaysSpeculatable]> {
   let assemblyFormat = "attr-dict `->` type($result)";
 }
 
-def EVM_BloobbasefeeOp : EVM_Op<"bloobbasefee", [Pure, AlwaysSpeculatable]> {
+def EVM_BlobbasefeeOp : EVM_Op<"blobbasefee", [Pure, AlwaysSpeculatable]> {
   let summary = "Return the current block's bloob base fee.";
   let description = [{
     Returns the bloob base fee of the current block.
@@ -677,7 +773,7 @@ def EVM_Create2Op : EVM_Op<"create2", [DeclareOpInterfaceMethods<MemoryEffectsOp
   let assemblyFormat = "$value `,` $init_code_offset `,` $init_code_length `,` $salt attr-dict `:` type($value) `,` type($init_code_offset) `,` type($init_code_length) `,` type($salt) `->` type($result)";
 }
 
-def EVM_ReturnOp : EVM_Op<"return", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+def EVM_ReturnOp : EVM_Op<"return", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>, Terminator]> {
   let summary = "Return from the current call with the given return data.";
   let description = [{
     Returns from the current call, providing `length` bytes of return data from
@@ -690,7 +786,7 @@ def EVM_ReturnOp : EVM_Op<"return", [DeclareOpInterfaceMethods<MemoryEffectsOpIn
   let assemblyFormat = "$offset `,` $length attr-dict `:` type($offset) `,` type($length)";
 }
 
-def EVM_RevertOp : EVM_Op<"revert", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+def EVM_RevertOp : EVM_Op<"revert", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>, Terminator]> {
   let summary = "Revert the current call with the given revert data.";
   let description = [{
     Reverts the current call, providing `length` bytes of revert data from
@@ -703,7 +799,16 @@ def EVM_RevertOp : EVM_Op<"revert", [DeclareOpInterfaceMethods<MemoryEffectsOpIn
   let assemblyFormat = "$offset `,` $length attr-dict `:` type($offset) `,` type($length)";
 }
 
-def EVM_SelfdestructOp : EVM_Op<"selfdestruct", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+def EVM_InvalidOp : EVM_Op<"invalid", [Terminator]> {
+  let summary = "Indicates an invalid instruction.";
+  let description = [{
+    This op is used to represent invalid instructions. It always traps when executed.
+  }];
+
+  let assemblyFormat = "attr-dict";
+}
+
+def EVM_SelfdestructOp : EVM_Op<"selfdestruct", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>, Terminator]> {
   let summary = "Transfer the current account's balance to a recipient, and destroy the account if created in the same transaction.";
   let description = [{
     Transfers the entire balance of the current account to the given recipient.

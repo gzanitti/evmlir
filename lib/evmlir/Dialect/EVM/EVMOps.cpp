@@ -10,6 +10,27 @@ using namespace evmlir::evm;
 #define GET_OP_CLASSES
 #include "evmlir/Dialect/EVM/EVMOps.cpp.inc"
 
+void InlineBytecodeOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // Can't be reordered with respect to any other op, so conservatively assume
+  // it can read/write everything.
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), mlir::evm::StorageResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), mlir::evm::StorageResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), mlir::evm::MemoryResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), mlir::evm::MemoryResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), mlir::evm::ReturnDataResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), mlir::evm::ReturnDataResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), mlir::evm::TransientStorageResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), mlir::evm::TransientStorageResource::get());
+  effects.emplace_back(MemoryEffects::Read::get(), mlir::evm::LogResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(), mlir::evm::LogResource::get());
+}
+
 void SloadOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -85,7 +106,7 @@ void Keccak256Op::getEffects(
                        mlir::evm::MemoryResource::get());
 }
 
-void CalldataCopyOp::getEffects(
+void CalldatacopyOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   effects.emplace_back(MemoryEffects::Write::get(),

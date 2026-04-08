@@ -1,6 +1,7 @@
 #ifndef EVMLIR_DIALECT_EVM_EVMOPS_H
 #define EVMLIR_DIALECT_EVM_EVMOPS_H
 
+#include "mlir/Bytecode/BytecodeOpInterface.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/OpDefinition.h"
