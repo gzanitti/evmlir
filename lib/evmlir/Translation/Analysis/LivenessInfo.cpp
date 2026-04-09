@@ -23,3 +23,7 @@ unsigned LivenessInfo::getUseCount(mlir::Value value) const {
   auto it = useCounts.find(value);
   return it != useCounts.end() ? it->second : 0;
 }
+
+bool LivenessInfo::isDeadAfter(mlir::Value value, mlir::Operation *op) const {
+  return liveness.isDeadAfter(value, op);
+}

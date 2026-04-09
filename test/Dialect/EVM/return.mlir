@@ -5,5 +5,4 @@ func.func @test_return() {
   %length = arith.constant 32 : i256
   // CHECK: evm.return
   evm.return %offset, %length : i256, i256
-  return
 }

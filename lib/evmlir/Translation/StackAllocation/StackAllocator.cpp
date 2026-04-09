@@ -18,8 +18,20 @@ mlir::DenseMap<mlir::Value, ValueLocation> StackAllocator::run() {
       toRemove = lower_spill_cost();
       assert(toRemove &&
              "lower_spill_cost returned empty value on non-empty graph");
-      assignment[toRemove] = SpilledLoc{memAllocator.allocate()};
-      ;
+      llvm::DenseSet<mlir::Value> currentStack;
+      for (auto &[value, loc] : assignment)
+        if (std::holds_alternative<StackLoc>(loc))
+          currentStack.insert(value);
+
+      bool isWarm = memAllocator.hasFreeSlots();
+      uint32_t expandCost = memAllocator.expansionCost();
+      auto recomputed =
+          costModel.recomputeCost(toRemove, currentStack, isWarm, expandCost);
+      if (recomputed &&
+          *recomputed < costModel.spillMemoryCost(isWarm, expandCost))
+        assignment[toRemove] = RecomputeLoc{toRemove.getDefiningOp()};
+      else
+        assignment[toRemove] = SpilledLoc{memAllocator.allocate()};
     }
 
     // Snapshot current neighbors before removal: these are exactly the
@@ -32,6 +44,10 @@ mlir::DenseMap<mlir::Value, ValueLocation> StackAllocator::run() {
 
   while (!simplificationStack.empty()) {
     auto value = simplificationStack.pop_back_val();
+
+    if (assignment.count(value))
+      continue;
+
     mlir::DenseSet<unsigned> usedColors;
     for (auto neighbor : neighborSnapshot[value]) {
       auto it = assignment.find(neighbor);
@@ -40,6 +56,25 @@ mlir::DenseMap<mlir::Value, ValueLocation> StackAllocator::run() {
 
       if (auto *stackLoc = std::get_if<StackLoc>(&it->second))
         usedColors.insert(stackLoc->position);
+    }
+
+    auto *op = value.getDefiningOp();
+
+    for (auto &[spilledValue, loc] : assignment) {
+      if (!std::holds_alternative<SpilledLoc>(loc))
+        continue;
+
+      bool isDead = false;
+      if (op) {
+        isDead = graph.getLivenessInfo().isDeadAfter(spilledValue, op);
+      } else {
+        auto blockArg = mlir::cast<mlir::BlockArgument>(value);
+        auto &liveOut = graph.getLivenessInfo().getLiveOut(blockArg.getOwner());
+        isDead = !liveOut.count(spilledValue);
+      }
+
+      if (isDead)
+        memAllocator.free(std::get<SpilledLoc>(loc).memOffset);
     }
 
     uint8_t assignedColor = 0;
@@ -56,11 +91,6 @@ unsigned StackAllocator::spill_cost(mlir::Value v) const {
 }
 
 mlir::Value StackAllocator::lower_spill_cost() {
-  llvm::DenseSet<mlir::Value> currentStack;
-  for (auto &[value, loc] : assignment)
-    if (std::holds_alternative<StackLoc>(loc))
-      currentStack.insert(value);
-
   mlir::Value lowestCostValue;
   unsigned lowestCost = std::numeric_limits<unsigned>::max();
   for (auto &value : graph.getValues()) {
@@ -71,13 +101,6 @@ mlir::Value StackAllocator::lower_spill_cost() {
       lowestCost = cost;
       lowestCostValue = value;
     }
-  }
-
-  auto recomputed = costModel.recomputeCost(lowestCostValue, currentStack);
-  if (recomputed && *recomputed < costModel.spillMemoryCost()) {
-    assignment[lowestCostValue] = RecomputeLoc{lowestCostValue.getDefiningOp()};
-  } else {
-    assignment[lowestCostValue] = SpilledLoc{memAllocator.allocate()};
   }
 
   return lowestCostValue;

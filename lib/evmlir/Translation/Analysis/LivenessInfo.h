@@ -10,6 +10,7 @@ public:
 
   const mlir::Liveness::ValueSetT &getLiveOut(mlir::Block *block) const;
   const mlir::Liveness::ValueSetT &getLiveIn(mlir::Block *block) const;
+  bool isDeadAfter(mlir::Value value, mlir::Operation *op) const;
 
   unsigned getUseCount(mlir::Value value) const;
 

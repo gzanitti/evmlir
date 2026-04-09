@@ -17,6 +17,7 @@ public:
   unsigned useCount(mlir::Value v) const;
   ValueList getValues() const;
   bool empty() const { return adjacency.empty(); }
+  LivenessInfo &getLivenessInfo() const { return livenessInfo; }
 
 private:
   mlir::DenseMap<mlir::Value, mlir::DenseSet<mlir::Value>> adjacency;

@@ -5,5 +5,4 @@ func.func @test_revert() {
   %length = arith.constant 32 : i256
   // CHECK: evm.revert
   evm.revert %offset, %length : i256, i256
-  return
 }

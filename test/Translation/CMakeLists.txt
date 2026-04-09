@@ -20,8 +20,9 @@ endfunction()
 add_translation_test(LivenessInfoTest      Analysis/LivenessInfo.cpp)
 add_translation_test(InterferenceGraphTest Analysis/InterferenceGraph.cpp)
 add_translation_test(StackAllocatorTest    StackAllocation/StackAllocator.cpp)
+add_translation_test(EVMCostModelTest      CodeGen/EVMCostModel.cpp)
 
 add_custom_target(check-evmlir-unit
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-  DEPENDS LivenessInfoTest InterferenceGraphTest StackAllocatorTest
+  DEPENDS LivenessInfoTest InterferenceGraphTest StackAllocatorTest EVMCostModelTest
 )

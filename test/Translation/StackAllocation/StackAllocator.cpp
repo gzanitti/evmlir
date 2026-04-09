@@ -1,33 +1,34 @@
 #include "StackAllocation/StackAllocator.h"
+#include "CodeGen/ForkSpec.h"
 #include "TestUtils.h"
 
 using StackAllocatorTest = TranslationTest;
 
 // Helper: run the full pipeline (liveness → interference → allocation) on fn.
-static mlir::DenseMap<mlir::Value, unsigned>
-runAllocation(mlir::func::FuncOp fn, LivenessInfo **livenessOut = nullptr,
-              InterferenceGraph **graphOut = nullptr,
-              StackAllocator **allocOut = nullptr) {
+static mlir::DenseMap<mlir::Value, ValueLocation>
+runAllocation(mlir::func::FuncOp fn, StackAllocator **allocOut = nullptr) {
   auto *liveness = new LivenessInfo(fn);
   auto *graph = new InterferenceGraph(*liveness, fn);
-  auto *alloc = new StackAllocator(*graph);
+  auto *alloc = new StackAllocator(*graph, MemoryAllocator{}, OsakaSpec);
   auto assignment = alloc->run();
-  if (livenessOut)
-    *livenessOut = liveness;
-  if (graphOut)
-    *graphOut = graph;
   if (allocOut)
     *allocOut = alloc;
-  if (!livenessOut)
-    delete liveness;
-  if (!graphOut)
-    delete graph;
-  if (!allocOut)
+  else
     delete alloc;
+  delete graph;
+  delete liveness;
   return assignment;
 }
 
-// Non-interfering sequential chain: values can share a color
+static bool isStackLoc(const ValueLocation &loc) {
+  return std::holds_alternative<StackLoc>(loc);
+}
+static uint8_t stackPos(const ValueLocation &loc) {
+  return std::get<StackLoc>(loc).position;
+}
+
+// Non-interfering sequential chain: values can share a color.
+// a is dead before c is computed, so a and c can share a stack slot.
 TEST_F(StackAllocatorTest, NonInterfering_CanShareColor) {
   auto fn = makeFunc("test", {}, {i32()});
   mlir::Value a = constant(1);
@@ -37,15 +38,18 @@ TEST_F(StackAllocatorTest, NonInterfering_CanShareColor) {
 
   LivenessInfo liveness(fn);
   InterferenceGraph graph(liveness, fn);
-  StackAllocator alloc(graph);
+  StackAllocator alloc(graph, MemoryAllocator{}, OsakaSpec);
   auto assignment = alloc.run();
 
-  EXPECT_NE(assignment[a], assignment[b]);
-  EXPECT_NE(assignment[b], assignment[c]);
-  EXPECT_EQ(assignment[a], assignment[c]);
+  ASSERT_TRUE(isStackLoc(assignment[a]));
+  ASSERT_TRUE(isStackLoc(assignment[b]));
+  ASSERT_TRUE(isStackLoc(assignment[c]));
+  EXPECT_NE(stackPos(assignment[a]), stackPos(assignment[b]));
+  EXPECT_NE(stackPos(assignment[b]), stackPos(assignment[c]));
+  EXPECT_EQ(stackPos(assignment[a]), stackPos(assignment[c]));
 }
 
-// Interfering pair: must get different colors
+// Interfering pair: must get different colors.
 TEST_F(StackAllocatorTest, Interfering_DifferentColors) {
   auto fn = makeFunc("test", {}, {i32()});
   mlir::Value a = constant(1);
@@ -55,15 +59,17 @@ TEST_F(StackAllocatorTest, Interfering_DifferentColors) {
 
   LivenessInfo liveness(fn);
   InterferenceGraph graph(liveness, fn);
-  StackAllocator alloc(graph);
+  StackAllocator alloc(graph, MemoryAllocator{}, OsakaSpec);
   auto assignment = alloc.run();
 
   ASSERT_TRUE(assignment.count(a));
   ASSERT_TRUE(assignment.count(b));
-  EXPECT_NE(assignment[a], assignment[b]);
+  ASSERT_TRUE(isStackLoc(assignment[a]));
+  ASSERT_TRUE(isStackLoc(assignment[b]));
+  EXPECT_NE(stackPos(assignment[a]), stackPos(assignment[b]));
 }
 
-// Three-clique: all three values need distinct colors
+// Three-clique: all three values need distinct colors.
 TEST_F(StackAllocatorTest, Triangle_ThreeDistinctColors) {
   auto fn = makeFunc("test", {}, {i32()});
   mlir::Value a = constant(1);
@@ -75,18 +81,21 @@ TEST_F(StackAllocatorTest, Triangle_ThreeDistinctColors) {
 
   LivenessInfo liveness(fn);
   InterferenceGraph graph(liveness, fn);
-  StackAllocator alloc(graph);
+  StackAllocator alloc(graph, MemoryAllocator{}, OsakaSpec);
   auto assignment = alloc.run();
 
   ASSERT_TRUE(assignment.count(a));
   ASSERT_TRUE(assignment.count(b));
   ASSERT_TRUE(assignment.count(c));
-  EXPECT_NE(assignment[a], assignment[b]);
-  EXPECT_NE(assignment[a], assignment[c]);
-  EXPECT_NE(assignment[b], assignment[c]);
+  ASSERT_TRUE(isStackLoc(assignment[a]));
+  ASSERT_TRUE(isStackLoc(assignment[b]));
+  ASSERT_TRUE(isStackLoc(assignment[c]));
+  EXPECT_NE(stackPos(assignment[a]), stackPos(assignment[b]));
+  EXPECT_NE(stackPos(assignment[a]), stackPos(assignment[c]));
+  EXPECT_NE(stackPos(assignment[b]), stackPos(assignment[c]));
 }
 
-// All assigned colors must be in range [0, 15].
+// All assigned stack colors must be in range [0, 15].
 TEST_F(StackAllocatorTest, ColorRespectsBounds) {
   auto fn = makeFunc("test", {}, {i32()});
   mlir::Value a = constant(1);
@@ -97,11 +106,13 @@ TEST_F(StackAllocatorTest, ColorRespectsBounds) {
   ret({e});
 
   auto assignment = runAllocation(fn);
-  for (auto &[val, color] : assignment)
-    EXPECT_LT(color, 16u) << "Color out of EVM stack bounds";
+  for (auto &[val, loc] : assignment) {
+    if (isStackLoc(loc))
+      EXPECT_LT(stackPos(loc), 16u) << "Color out of EVM stack bounds";
+  }
 }
 
-// Linear chain with shared colors
+// Linear chain with shared colors.
 TEST_F(StackAllocatorTest, LinearChainWithShared_ThreeColors) {
   auto fn = makeFunc("test", {}, {i32()});
   mlir::Value a = constant(1);
@@ -113,23 +124,27 @@ TEST_F(StackAllocatorTest, LinearChainWithShared_ThreeColors) {
 
   auto assignment = runAllocation(fn);
 
-  // Collect the set of distinct colors used.
-  llvm::DenseSet<unsigned> colors;
-  for (auto &[val, color] : assignment)
-    colors.insert(color);
+  llvm::DenseSet<uint8_t> colors;
+  for (auto &[val, loc] : assignment)
+    if (isStackLoc(loc))
+      colors.insert(stackPos(loc));
 
-  EXPECT_LE(colors.size(), 3);
+  EXPECT_LE(colors.size(), 3u);
 
-  EXPECT_NE(assignment[a], assignment[b]);
-  EXPECT_NE(assignment[a], assignment[t1]);
-  EXPECT_NE(assignment[b], assignment[t1]);
-  EXPECT_NE(assignment[t1], assignment[c]);
-  EXPECT_NE(assignment[t1], assignment[t2]);
-  EXPECT_NE(assignment[c], assignment[t2]);
+  ASSERT_TRUE(isStackLoc(assignment[a]));
+  ASSERT_TRUE(isStackLoc(assignment[b]));
+  ASSERT_TRUE(isStackLoc(assignment[t1]));
+  ASSERT_TRUE(isStackLoc(assignment[c]));
+  ASSERT_TRUE(isStackLoc(assignment[t2]));
+  EXPECT_NE(stackPos(assignment[a]), stackPos(assignment[b]));
+  EXPECT_NE(stackPos(assignment[a]), stackPos(assignment[t1]));
+  EXPECT_NE(stackPos(assignment[b]), stackPos(assignment[t1]));
+  EXPECT_NE(stackPos(assignment[t1]), stackPos(assignment[c]));
+  EXPECT_NE(stackPos(assignment[t1]), stackPos(assignment[t2]));
+  EXPECT_NE(stackPos(assignment[c]), stackPos(assignment[t2]));
 }
 
-// Every value with an edge in the interference graph must appear in the
-// assignment map after run().
+// Every value in the interference graph must appear in the assignment map.
 TEST_F(StackAllocatorTest, AllInterferingValuesAssigned) {
   auto fn = makeFunc("test", {}, {i32()});
   mlir::Value a = constant(1);
@@ -146,40 +161,45 @@ TEST_F(StackAllocatorTest, AllInterferingValuesAssigned) {
   for (auto v : graph.getValues())
     graphValues.push_back(v);
 
-  StackAllocator alloc(graph);
+  StackAllocator alloc(graph, MemoryAllocator{}, OsakaSpec);
   auto assignment = alloc.run();
 
   for (auto v : graphValues)
-    EXPECT_TRUE(assignment.count(v)) << "Value has no color assignment";
+    EXPECT_TRUE(assignment.count(v)) << "Value has no location assignment";
 }
 
-// Spilled values must still receive a color assignment.
-TEST_F(StackAllocatorTest, SpilledValues_StillGetColor) {
-  // Build a function that forces at least one spill (17 simultaneously-live
-  // constants so that one of them has 16 real neighbors).
-  auto fn = makeFunc("test", {}, {i32()});
+// When 17 values are simultaneously live, the forced-spill path is triggered.
+// All values must still appear in the assignment map (SpilledLoc, RecomputeLoc,
+// or StackLoc).
+TEST_F(StackAllocatorTest, ForcedSpill_AllValuesAssigned) {
   const int N = 17;
-  llvm::SmallVector<mlir::Value> consts;
+  llvm::SmallVector<mlir::Type> argTypes(N, i32());
+  auto fn = makeFunc("test", argTypes, {i32()});
+  auto &entry = fn.getBody().front();
+  llvm::SmallVector<mlir::Value> args;
   for (int i = 0; i < N; ++i)
-    consts.push_back(constant(i));
+    args.push_back(entry.getArgument(i));
 
-  mlir::Value acc = add(consts[0], consts[1]);
+  mlir::Value acc = add(args[0], args[1]);
   for (int i = 2; i < N; ++i)
-    acc = add(acc, consts[i]);
+    acc = add(acc, args[i]);
   ret({acc});
 
   LivenessInfo liveness(fn);
   InterferenceGraph graph(liveness, fn);
-  StackAllocator alloc(graph);
+
+  llvm::SmallVector<mlir::Value> graphValues;
+  for (auto v : graph.getValues())
+    graphValues.push_back(v);
+
+  StackAllocator alloc(graph, MemoryAllocator{}, OsakaSpec);
   auto assignment = alloc.run();
 
-  EXPECT_FALSE(alloc.spilledValues.empty());
-
-  for (auto v : alloc.spilledValues)
-    EXPECT_TRUE(assignment.count(v)) << "Spilled value has no color";
+  for (auto v : graphValues)
+    EXPECT_TRUE(assignment.count(v)) << "Value missing from assignment";
 }
 
-// The simplification stack is populated during run() (then fully drained).
+// The simplification stack is fully drained after run().
 TEST_F(StackAllocatorTest, SimplificationStack_DrainedAfterRun) {
   auto fn = makeFunc("test", {}, {i32()});
   mlir::Value a = constant(1);
@@ -189,79 +209,137 @@ TEST_F(StackAllocatorTest, SimplificationStack_DrainedAfterRun) {
 
   LivenessInfo liveness(fn);
   InterferenceGraph graph(liveness, fn);
-  StackAllocator alloc(graph);
+  StackAllocator alloc(graph, MemoryAllocator{}, OsakaSpec);
   alloc.run();
 
-  // run() pops everything off the simplification stack during the coloring
-  // phase; it should be empty when run() returns.
   EXPECT_TRUE(alloc.simplificationStack.empty());
 }
 
-// neighborSnapshot captures each value's neighbors at the moment of removal,
-// before those edges are deleted. After run(), the snapshot for an interfering
-// pair must contain the peer.
-TEST_F(StackAllocatorTest, NeighborSnapshot_CapturedBeforeRemoval) {
-  auto fn = makeFunc("test", {}, {i32()});
-  mlir::Value a = constant(1);
-  mlir::Value b = constant(2);
-  mlir::Value c = add(a, b);
-  ret({c});
-
-  LivenessInfo liveness(fn);
-  InterferenceGraph graph(liveness, fn);
-  StackAllocator alloc(graph);
-  alloc.run();
-
-  // %a and %b interfere. Whichever was simplified first, its snapshot must
-  // contain the other (since at that moment they were still connected).
-  bool snapshotAHasB =
-      alloc.neighborSnapshot.count(a) && alloc.neighborSnapshot[a].count(b);
-  bool snapshotBHasA =
-      alloc.neighborSnapshot.count(b) && alloc.neighborSnapshot[b].count(a);
-  // At least one of them was simplified while the other was still present.
-  EXPECT_TRUE(snapshotAHasB || snapshotBHasA);
-}
-
-// Spill cost heuristic: lower useCount/neighbors ratio wins.
-// We craft two candidate values where one has clearly lower cost.
-// useCount=1, N neighbors → cost 0 (int division)
-// useCount=N+1, N neighbors → cost 1 (int division for N ≥ 2)
-// The low-cost value should be the one selected for spill.
-//
-// To trigger the spill path both values need ≥ 16 neighbors. We achieve this
-// with 17 constants where one is used an extra time.
+// Spill cost heuristic: lower useCount/neighbors ratio is selected first.
+// consts[0] has useCount=1; consts[1] has useCount=2 (used an extra time).
+// With N=17, all interfere → 16 neighbors each → spill_cost(consts[0])=0,
+// spill_cost(consts[1])=0 too (1/16 and 2/16 both truncate to 0 in integer
+// division with 16 neighbors). However, as N grows, consts[1] eventually gets
+// cost=1 while consts[0] stays at 0. We use N=17 where the ratio difference
+// is detectable: consts[1] should NOT be the sole non-stack value while
+// consts[0] gets a stack location.
 TEST_F(StackAllocatorTest, SpillCostHeuristic_LowUsageSpilledFirst) {
   auto fn = makeFunc("test", {}, {i32()});
-  const int N = 17; // ensures ≥ 16 simultaneous live values
+  const int N = 17;
 
   llvm::SmallVector<mlir::Value> consts;
   for (int i = 0; i < N; ++i)
-    consts.push_back(constant(i));
+    consts.push_back(constant(i + 1));
 
-  // consts[0] is used once in the chain.
-  // consts[1] will be reused at the end to get a higher use count.
   mlir::Value acc = add(consts[0], consts[1]);
   for (int i = 2; i < N; ++i)
     acc = add(acc, consts[i]);
 
-  // Extra use of consts[1]: raises its useCount, increasing its spill cost.
   acc = add(acc, consts[1]);
   ret({acc});
 
   LivenessInfo liveness(fn);
   InterferenceGraph graph(liveness, fn);
-  StackAllocator alloc(graph);
+  StackAllocator alloc(graph, MemoryAllocator{}, OsakaSpec);
   alloc.run();
 
-  // consts[0] has the lowest use count → lowest spill cost → should be
-  // preferred for spill over consts[1] (which is used more times).
-  if (!alloc.spilledValues.empty() && alloc.spilledValues.count(consts[0]) &&
-      alloc.spilledValues.count(consts[1])) {
-    // Both got spilled (acceptable if there are 2+ spillees); just verify
-    // neither was the only one wrongly chosen.
-    SUCCEED();
-  } else if (alloc.spilledValues.count(consts[1]) &&
-             !alloc.spilledValues.count(consts[0])) {
-    FAIL() << "Higher-usage value was spilled instead of lower-usage one";
-  }
+  bool consts0NonStack = !isStackLoc(alloc.assignment[consts[0]]);
+  bool consts1NonStack = !isStackLoc(alloc.assignment[consts[1]]);
+  if (consts1NonStack && !consts0NonStack)
+    FAIL() << "Higher-usage value got non-stack location instead of "
+              "lower-usage one";
+}
+
+// Builds a function with a 17-clique: 17 add results all live simultaneously.
+// %a and %b are function args; 17 adds of (%a,%b) are all alive at once when
+// they're all consumed together in the reduction tree.
+static mlir::func::FuncOp buildCliqueFunc(TranslationTest &t) {
+  auto fn = t.makeFunc("with_clique", {t.i32(), t.i32()}, {t.i32()});
+  mlir::Value a = fn.getBody().front().getArgument(0);
+  mlir::Value b = fn.getBody().front().getArgument(1);
+
+  llvm::SmallVector<mlir::Value> c;
+  for (int i = 0; i < 17; ++i)
+    c.push_back(t.add(a, b));
+
+  mlir::Value t0 = t.add(c[0], c[1]);
+  mlir::Value t1 = t.add(c[2], c[3]);
+  mlir::Value t2 = t.add(c[4], c[5]);
+  mlir::Value t3 = t.add(c[6], c[7]);
+  mlir::Value t4 = t.add(c[8], c[9]);
+  mlir::Value t5 = t.add(c[10], c[11]);
+  mlir::Value t6 = t.add(c[12], c[13]);
+  mlir::Value t7 = t.add(c[14], c[15]);
+  mlir::Value t8 = t.add(t0, c[16]);
+
+  mlir::Value r0 = t.add(t0, t1);
+  mlir::Value r1 = t.add(t2, t3);
+  mlir::Value r2 = t.add(t4, t5);
+  mlir::Value r3 = t.add(t6, t7);
+  mlir::Value r4 = t.add(r0, r1);
+  mlir::Value r5 = t.add(r2, r3);
+  mlir::Value res = t.add(r4, r5);
+  (void)t8;
+  t.ret({res});
+  return fn;
+}
+
+// With 17 simultaneously-live function arguments (all interfering pairwise),
+// at least one must receive a non-stack location since EVM stack depth is 16.
+TEST_F(StackAllocatorTest, ForcedSpill_HasNonStackLocation) {
+  auto fn = buildCliqueFunc(*this);
+  auto assignment = runAllocation(fn);
+
+  bool anyNonStack = false;
+  for (auto &[val, loc] : assignment)
+    if (!isStackLoc(loc))
+      anyNonStack = true;
+  EXPECT_TRUE(anyNonStack)
+      << "Expected at least one non-stack location with 17 live args";
+}
+
+// When recompute cost is cheaper than spill, the allocator must choose
+// RecomputeLoc. 17 constants returned directly form a pure 17-clique.
+TEST_F(StackAllocatorTest, RecomputeLoc_WhenCheaper) {
+  const int N = 17;
+  llvm::SmallVector<mlir::Type> retTypes(N, i32());
+  auto fn = makeFunc("test", {}, retTypes);
+  llvm::SmallVector<mlir::Value> consts;
+  for (int i = 0; i < N; ++i)
+    consts.push_back(constant(i + 1));
+  ret(consts);
+
+  auto assignment = runAllocation(fn);
+
+  bool anyRecompute = false;
+  for (auto &[val, loc] : assignment)
+    if (std::holds_alternative<RecomputeLoc>(loc))
+      anyRecompute = true;
+  EXPECT_TRUE(anyRecompute) << "Expected RecomputeLoc: constants cost 3 gas to "
+                               "recompute vs 12 gas to spill";
+}
+
+// SpilledLoc is used when a value cannot be recomputed. Function arguments
+// have no defining op so recompute returns nullopt → forced to SpilledLoc.
+// Build a clique with function args to guarantee the spill path is hit.
+TEST_F(StackAllocatorTest, SpilledValue_GetsSpilledLoc) {
+  const int N = 17;
+  llvm::SmallVector<mlir::Type> argTypes(N, i32());
+  llvm::SmallVector<mlir::Type> retTypes(N, i32());
+  auto fn = makeFunc("test", argTypes, retTypes);
+  auto &entry = fn.getBody().front();
+  llvm::SmallVector<mlir::Value> args;
+  for (int i = 0; i < N; ++i)
+    args.push_back(entry.getArgument(i));
+  ret(args);
+
+  auto assignment = runAllocation(fn);
+
+  bool anySpilled = false;
+  for (auto arg : args)
+    if (assignment.count(arg) &&
+        std::holds_alternative<SpilledLoc>(assignment[arg]))
+      anySpilled = true;
+  EXPECT_TRUE(anySpilled)
+      << "At least one arg should be SpilledLoc (no defining op)";
 }

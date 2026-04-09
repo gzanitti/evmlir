@@ -17,3 +17,10 @@ void MemoryAllocator::free(uint32_t memOffset) {
 }
 
 uint32_t MemoryAllocator::highWaterMark() const { return nextOffset; }
+
+bool MemoryAllocator::hasFreeSlots() const { return !freeList.empty(); }
+
+uint32_t MemoryAllocator::expansionCost() const {
+  uint32_t words = nextOffset / 32;
+  return 3 + (2 * words + 1) / 512;
+}

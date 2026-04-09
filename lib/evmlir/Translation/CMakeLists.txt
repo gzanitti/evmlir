@@ -2,6 +2,7 @@ add_mlir_library(EVMTranslation
   EVMTranslation.cpp
   Analysis/LivenessInfo.cpp
   Analysis/InterferenceGraph.cpp
+  StackAllocation/MemoryAllocator.cpp
   StackAllocation/StackAllocator.cpp
   CodeGen/OsakaSpec.cpp
   CodeGen/OpcodeMapper.cpp

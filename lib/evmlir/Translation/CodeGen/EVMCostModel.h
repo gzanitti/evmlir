@@ -9,8 +9,9 @@ public:
 
   std::optional<uint32_t>
   recomputeCost(mlir::Value v, const mlir::DenseSet<mlir::Value> &currentStack,
-                uint32_t depth = 0, uint32_t accumulatedCost = 0) const;
-  uint32_t spillMemoryCost() const;
+                bool nextSlotIsWarm, uint32_t memExpansionCost) const;
+  uint32_t spillMemoryCost(bool nextSlotIsWarm,
+                           uint32_t memExpansionCost) const;
 
 private:
   const ForkSpec &spec;
@@ -18,4 +19,7 @@ private:
 
   uint32_t opcodeCost(mlir::Operation *op) const;
   bool canRecompute(mlir::Operation *op) const;
+  std::optional<uint32_t> recomputeCostImpl(
+      mlir::Value v, const llvm::DenseSet<mlir::Value> &currentStack,
+      uint32_t threshold, uint32_t depth, uint32_t accumulatedCost) const;
 };

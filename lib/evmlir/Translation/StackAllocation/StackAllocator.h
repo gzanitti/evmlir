@@ -9,12 +9,24 @@
 
 struct StackLoc {
   uint8_t position;
+  bool operator==(const StackLoc &other) const {
+    return position == other.position;
+  }
+  bool operator!=(const StackLoc &other) const { return !(*this == other); }
 };
+
 struct SpilledLoc {
   uint32_t memOffset;
+  bool operator==(const SpilledLoc &other) const {
+    return memOffset == other.memOffset;
+  }
+  bool operator!=(const SpilledLoc &other) const { return !(*this == other); }
 };
+
 struct RecomputeLoc {
   mlir::Operation *op;
+  bool operator==(const RecomputeLoc &other) const { return op == other.op; }
+  bool operator!=(const RecomputeLoc &other) const { return !(*this == other); }
 };
 
 using ValueLocation = std::variant<StackLoc, SpilledLoc, RecomputeLoc>;
@@ -23,7 +35,6 @@ class StackAllocator {
 public:
   StackAllocator(InterferenceGraph &graph, MemoryAllocator mem, ForkSpec spec)
       : graph(graph), memAllocator(mem), costModel(EVMCostModel(spec)) {}
-  InterferenceGraph &graph;
   mlir::SmallVector<mlir::Value> simplificationStack;
   mlir::DenseMap<mlir::Value, mlir::DenseSet<mlir::Value>> neighborSnapshot;
   mlir::DenseMap<mlir::Value, ValueLocation> assignment;
@@ -32,6 +43,7 @@ public:
   mlir::Value lower_spill_cost();
 
 private:
+  InterferenceGraph &graph;
   MemoryAllocator memAllocator;
   EVMCostModel costModel;
   unsigned spill_cost(mlir::Value v) const;

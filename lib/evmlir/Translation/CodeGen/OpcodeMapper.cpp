@@ -14,6 +14,11 @@ std::optional<Opcode> getOpcode(mlir::Operation *op) {
   return llvm::TypeSwitch<mlir::Operation *, std::optional<Opcode>>(op)
       .Case<evmlir::evm::InlineBytecodeOp>([](auto) { return std::nullopt; })
       .Case<evmlir::evm::StopOp>([](auto) { return Opcode::STOP; })
+      .Case<mlir::arith::ConstantIntOp>([](auto op) -> std::optional<Opcode> {
+        if (op.value() == 0)
+          return Opcode::PUSH0;
+        return Opcode::PUSH32;
+      })
       .Case<mlir::arith::AddIOp>([](auto) { return Opcode::ADD; })
       .Case<mlir::arith::MulIOp>([](auto) { return Opcode::MUL; })
       .Case<mlir::arith::SubIOp>([](auto) { return Opcode::SUB; })
@@ -24,8 +29,7 @@ std::optional<Opcode> getOpcode(mlir::Operation *op) {
       .Case<evmlir::evm::AddmodOp>([](auto) { return Opcode::ADDMOD; })
       .Case<evmlir::evm::MulmodOp>([](auto) { return Opcode::MULMOD; })
       .Case<evmlir::evm::ExpOp>([](auto) { return Opcode::EXP; })
-      .Case<evmlir::evm::SignextendOp>(
-          [](auto) { return Opcode::SIGNEXTEND; })
+      .Case<evmlir::evm::SignextendOp>([](auto) { return Opcode::SIGNEXTEND; })
       .Case<mlir::arith::CmpIOp>([](auto op) -> std::optional<Opcode> {
         switch (op.getPredicate()) {
         case mlir::arith::CmpIPredicate::ult:
@@ -108,8 +112,7 @@ std::optional<Opcode> getOpcode(mlir::Operation *op) {
       .Case<evmlir::evm::CoinbaseOp>([](auto) { return Opcode::COINBASE; })
       .Case<evmlir::evm::TimestampOp>([](auto) { return Opcode::TIMESTAMP; })
       .Case<evmlir::evm::NumberOp>([](auto) { return Opcode::NUMBER; })
-      .Case<evmlir::evm::PrevrandaoOp>(
-          [](auto) { return Opcode::PREVRANDAO; })
+      .Case<evmlir::evm::PrevrandaoOp>([](auto) { return Opcode::PREVRANDAO; })
       .Case<evmlir::evm::GaslimitOp>([](auto) { return Opcode::GASLIMIT; })
       .Case<evmlir::evm::ChainidOp>([](auto) { return Opcode::CHAINID; })
       .Case<evmlir::evm::SelfbalanceOp>(
@@ -146,8 +149,7 @@ std::optional<Opcode> getOpcode(mlir::Operation *op) {
       .Case<evmlir::evm::DelegatecallOp>(
           [](auto) { return Opcode::DELEGATECALL; })
       .Case<evmlir::evm::Create2Op>([](auto) { return Opcode::CREATE2; })
-      .Case<evmlir::evm::StaticcallOp>(
-          [](auto) { return Opcode::STATICCALL; })
+      .Case<evmlir::evm::StaticcallOp>([](auto) { return Opcode::STATICCALL; })
       .Case<evmlir::evm::RevertOp>([](auto) { return Opcode::REVERT; })
       .Case<evmlir::evm::InvalidOp>([](auto) { return Opcode::INVALID; })
       .Case<evmlir::evm::SelfdestructOp>(

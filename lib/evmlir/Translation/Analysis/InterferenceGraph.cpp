@@ -26,6 +26,8 @@ InterferenceGraph::InterferenceGraph(LivenessInfo &livenessInfo,
 
     for (auto arg : block.getArguments()) {
       for (auto live : liveNow) {
+        if (live == arg)
+          continue;
         adjacency[arg].insert(live);
         adjacency[live].insert(arg);
       }
