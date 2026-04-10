@@ -6,13 +6,14 @@
 #include "MemoryAllocator.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
+#include <cassert>
 
 struct StackLoc {
-  uint8_t position;
-  bool operator==(const StackLoc &other) const {
-    return position == other.position;
+  uint8_t color;
+  bool operator==(const StackLoc &other) const { return color == other.color; }
+  bool operator!=(const StackLoc &other) const {
+    return !(color == other.color);
   }
-  bool operator!=(const StackLoc &other) const { return !(*this == other); }
 };
 
 struct SpilledLoc {
@@ -20,13 +21,15 @@ struct SpilledLoc {
   bool operator==(const SpilledLoc &other) const {
     return memOffset == other.memOffset;
   }
-  bool operator!=(const SpilledLoc &other) const { return !(*this == other); }
+  bool operator!=(const SpilledLoc &other) const {
+    return !(memOffset == other.memOffset);
+  }
 };
 
 struct RecomputeLoc {
   mlir::Operation *op;
   bool operator==(const RecomputeLoc &other) const { return op == other.op; }
-  bool operator!=(const RecomputeLoc &other) const { return !(*this == other); }
+  bool operator!=(const RecomputeLoc &other) const { return !(op == other.op); }
 };
 
 using ValueLocation = std::variant<StackLoc, SpilledLoc, RecomputeLoc>;

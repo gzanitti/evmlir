@@ -44,8 +44,6 @@
 //   WARM_SLOAD          =  100   (subsequent accesses)
 
 #include "ForkSpec.h"
-#include "Opcode.h"
-#include <cstdint>
 
 static ForkSpec buildOsakaSpec() {
   ForkSpec spec;

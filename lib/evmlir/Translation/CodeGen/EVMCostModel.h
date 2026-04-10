@@ -1,6 +1,7 @@
 #include "ForkSpec.h"
 #include "OpcodeMapper.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include <cstdint>
 
 class EVMCostModel {

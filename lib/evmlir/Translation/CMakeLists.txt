@@ -8,6 +8,8 @@ add_mlir_library(EVMTranslation
   CodeGen/OpcodeMapper.cpp
   CodeGen/EVMCostModel.cpp
   CodeGen/EVMEmitter.cpp
+  CodeGen/BytecodeStream.cpp
+  CodeGen/StackTracker.cpp
 
   DEPENDS
   EVMDialect

@@ -5,6 +5,7 @@ include "mlir/IR/DialectBase.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/BuiltinTypes.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "evmlir/Dialect/EVM/EVMAttributes.td"
 
 def I256 : I<256>;
 
@@ -22,6 +23,7 @@ def EVM_Dialect : Dialect {
     (block context, transaction context, etc).
   }];
   let cppNamespace = "::evmlir::evm";
+  let hasOperationAttrVerify = 1;
 }
 
 class EVM_Op<string mnemonic, list<Trait> traits = []>

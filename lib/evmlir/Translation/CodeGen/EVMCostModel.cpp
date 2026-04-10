@@ -1,7 +1,6 @@
 
 
 #include "EVMCostModel.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
 
 std::optional<uint32_t> EVMCostModel::recomputeCost(
     mlir::Value v, const llvm::DenseSet<mlir::Value> &currentStack,

@@ -10,3 +10,9 @@ set(LLVM_TARGET_DEFINITIONS EVMOps.td)
 mlir_tablegen(EVMOps.h.inc     -gen-op-decls)
 mlir_tablegen(EVMOps.cpp.inc   -gen-op-defs)
 add_public_tablegen_target(EVMOpsIncGen)
+
+# Attributes
+set(LLVM_TARGET_DEFINITIONS EVMAttributes.td)
+mlir_tablegen(EVMAttributes.h.inc -gen-enum-decls)
+mlir_tablegen(EVMAttributes.cpp.inc -gen-enum-defs)
+add_public_tablegen_target(EVMAttributesIncGen)

@@ -5,6 +5,7 @@ add_mlir_library(EVMDialect
   DEPENDS
     EVMDialectIncGen
     EVMOpsIncGen
+    EVMAttributesIncGen
 
     LINK_LIBS PUBLIC
     MLIRDialect

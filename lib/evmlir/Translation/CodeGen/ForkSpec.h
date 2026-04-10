@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Opcode.h"
 #include <cstdint>
 #include <llvm-18/llvm/ADT/StringRef.h>
 

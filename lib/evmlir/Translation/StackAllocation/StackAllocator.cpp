@@ -1,8 +1,6 @@
 
 #include "StackAllocator.h"
-#include "mlir/IR/Value.h"
-#include "mlir/Support/LLVM.h"
-#include <cassert>
+
 mlir::DenseMap<mlir::Value, ValueLocation> StackAllocator::run() {
   while (!graph.empty()) {
     mlir::Value toRemove;
@@ -55,7 +53,7 @@ mlir::DenseMap<mlir::Value, ValueLocation> StackAllocator::run() {
         continue;
 
       if (auto *stackLoc = std::get_if<StackLoc>(&it->second))
-        usedColors.insert(stackLoc->position);
+        usedColors.insert(stackLoc->color);
     }
 
     auto *op = value.getDefiningOp();
