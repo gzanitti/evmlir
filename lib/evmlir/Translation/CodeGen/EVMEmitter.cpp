@@ -1,24 +1,47 @@
 
 #include "EVMEmitter.h"
-#include <iostream>
 
-std::vector<uint8_t> EVMEmitter::emitFunction(mlir::func::FuncOp func) {
+std::vector<uint8_t> EVMEmitter::emitModule(mlir::ModuleOp module,
+                                            DispatcherStrategy &dispatcher) {
+  llvm::SmallVector<std::pair<uint32_t, LabelID>> entries;
 
-  for (auto &block : func.getBody())
-    blockLabels[&block] = stream.createLabel();
+  for (auto func : module.getOps<mlir::func::FuncOp>()) {
+    // Pre-allocate labels for all blocks.
+    for (auto &block : func.getBody())
+      blockLabels[&block] = stream.createLabel();
 
-  llvm::ReversePostOrderTraversal<mlir::Region *> rpo(&func.getBody());
-  for (auto *block : rpo)
-    emitBlock(*block);
+    // Collect external function entries for dispatcher.
+    auto visAttr = func->getAttrOfType<mlir::IntegerAttr>("evm.visibility");
+    auto kindAttr = func->getAttrOfType<mlir::IntegerAttr>("evm.kind");
+    auto selAttr = func->getAttrOfType<mlir::IntegerAttr>("evm.selector");
+    if (visAttr && kindAttr && selAttr) {
+      auto vis = static_cast<evmlir::evm::Visibility>(visAttr.getInt());
+      auto kind = static_cast<evmlir::evm::FunctionKind>(kindAttr.getInt());
+      if (vis == evmlir::evm::Visibility::External &&
+          kind == evmlir::evm::FunctionKind::Function)
+        entries.push_back({static_cast<uint32_t>(selAttr.getInt()),
+                           blockLabels[&func.getBody().front()]});
+    }
+  }
+
+  dispatcher.emitSelectorLoad(stream);
+  dispatcher.emit(entries, stream);
+
+  for (auto func : module.getOps<mlir::func::FuncOp>())
+    emitFunction(func);
 
   return stream.finalize();
 }
 
+void EVMEmitter::emitFunction(mlir::func::FuncOp func) {
+  llvm::ReversePostOrderTraversal<mlir::Region *> rpo(&func.getBody());
+  for (auto *block : rpo)
+    emitBlock(*block);
+}
+
 void EVMEmitter::emitBlock(mlir::Block &block) {
-  if (!block.isEntryBlock()) {
-    stream.defineLabel(blockLabels[&block]);
-    stream.emit(Opcode::JUMPDEST);
-  }
+  stream.defineLabel(blockLabels[&block]);
+  stream.emit(Opcode::JUMPDEST);
   for (auto &op : block)
     emitOp(op);
 }
@@ -32,6 +55,8 @@ void EVMEmitter::emitOp(mlir::Operation &op) {
     return emitReturn(returnOp);
   if (auto constOp = mlir::dyn_cast<mlir::arith::ConstantOp>(op))
     return emitConstant(constOp);
+  if (auto callOp = mlir::dyn_cast<mlir::func::CallOp>(op))
+    return emitCall(callOp);
 
   scheduleOperands(op);
   auto opcodeOpt = getOpcode(&op);
@@ -113,6 +138,29 @@ void EVMEmitter::emitRecompute(mlir::Operation *op) {
   }
 }
 
+void EVMEmitter::emitCall(mlir::func::CallOp &call) {
+  // Look up the callee function in the module.
+  auto module = call->getParentOfType<mlir::ModuleOp>();
+  auto callee = mlir::cast<mlir::func::FuncOp>(
+      mlir::SymbolTable::lookupNearestSymbolFrom(module, call.getCalleeAttr()));
+
+  auto operands = call.getOperands();
+  for (auto operand : llvm::reverse(operands))
+    emitValue(operand, call);
+
+  LabelID retLabel = stream.createLabel();
+  stream.emitJumpTarget(retLabel);
+  stream.emitJumpTarget(blockLabels[&callee.getBody().front()]);
+  stream.emit(Opcode::JUMP);
+
+  stream.defineLabel(retLabel);
+  stream.emit(Opcode::JUMPDEST);
+
+  // Results are now on top of the stack.
+  for (auto result : call.getResults())
+    stackTracker.push(result);
+}
+
 void EVMEmitter::emitConstant(mlir::arith::ConstantOp &constOp) {
   auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(constOp.getValue());
   if (!intAttr)
@@ -160,7 +208,17 @@ void EVMEmitter::emitReturn(mlir::func::ReturnOp &ret) {
           static_cast<Opcode>(static_cast<uint8_t>(Opcode::SWAP1) + depth - 1));
     stream.emit(Opcode::JUMP);
   } else {
-    llvm_unreachable(
-        "external function return: ABI encoding not yet implemented");
+    uint32_t numValues = ret.getNumOperands();
+    for (uint32_t i = 0; i < numValues; ++i) {
+      uint32_t offset = (numValues - 1 - i) * 32;
+      stream.emitPush(offset);
+      // stackTracker.push(mlir::Value{}); // offset placeholder
+      stream.emit(Opcode::MSTORE);
+      // stackTracker.pop(); // offset
+      stackTracker.pop(); // value
+    }
+    stream.emitPush(uint32_t(numValues * 32));
+    stream.emitPush(uint32_t(0));
+    stream.emit(Opcode::RETURN);
   }
 }
