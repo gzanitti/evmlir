@@ -1,8 +1,56 @@
 
 #include "EVMEmitter.h"
+#include "BytecodeStream.h"
+#include <cstdint>
 
-std::vector<uint8_t> EVMEmitter::emitModule(mlir::ModuleOp module,
-                                            DispatcherStrategy &dispatcher) {
+EmittedContract EVMEmitter::emitModule(mlir::ModuleOp module,
+                                       DispatcherStrategy &dispatcher) {
+  BytecodeStream runtimeStream;
+  BytecodeStream deployStream;
+  emitRuntime(module, runtimeStream, dispatcher);
+  auto runtimeBytecode = runtimeStream.finalize();
+  emitDeploy(module, deployStream, runtimeBytecode.size());
+  auto deployBytecode = deployStream.finalize();
+
+  return {deployBytecode, runtimeBytecode};
+}
+
+void EVMEmitter::emitDeploy(mlir::ModuleOp module, BytecodeStream &stream,
+                            uint32_t runtimeSize) {
+  auto constructor = findConstructor(module);
+  if (constructor)
+    emitConstructor(constructor, stream);
+
+  LabelID runtimeStart = stream.createLabel();
+
+  // CODECOPY(destOffset=TOS, codeOffset, length=deepest)
+  stream.emitPush(uint32_t(runtimeSize));
+  stream.emitJumpTarget(runtimeStart);
+  stream.emitPush(uint32_t(0));
+  stream.emit(Opcode::CODECOPY);
+
+  // RETURN(offset=TOS, size=deepest)
+  stream.emitPush(uint32_t(runtimeSize));
+  stream.emitPush(uint32_t(0));
+  stream.emit(Opcode::RETURN);
+
+  stream.defineLabel(runtimeStart);
+}
+
+mlir::func::FuncOp EVMEmitter::findConstructor(mlir::ModuleOp module) {
+  for (auto func : module.getOps<mlir::func::FuncOp>()) {
+    auto kindAttr = func->getAttrOfType<mlir::IntegerAttr>("evm.kind");
+    if (!kindAttr)
+      continue;
+    if (static_cast<evmlir::evm::FunctionKind>(kindAttr.getInt()) ==
+        evmlir::evm::FunctionKind::Constructor)
+      return func;
+  }
+  return nullptr;
+}
+
+void EVMEmitter::emitRuntime(mlir::ModuleOp module, BytecodeStream &stream,
+                             DispatcherStrategy &dispatcher) {
   llvm::SmallVector<std::pair<uint32_t, LabelID>> entries;
 
   for (auto func : module.getOps<mlir::func::FuncOp>()) {
@@ -28,37 +76,50 @@ std::vector<uint8_t> EVMEmitter::emitModule(mlir::ModuleOp module,
   dispatcher.emit(entries, stream);
 
   for (auto func : module.getOps<mlir::func::FuncOp>())
-    emitFunction(func);
-
-  return stream.finalize();
+    emitFunction(func, stream);
 }
 
-void EVMEmitter::emitFunction(mlir::func::FuncOp func) {
+void EVMEmitter::emitConstructor(mlir::func::FuncOp func,
+                                 BytecodeStream &stream) {
+  stackTracker.reset();
+  llvm::ReversePostOrderTraversal<mlir::Region *> rpo(&func.getBody());
+  for (auto *block : rpo) {
+    if (!block->isEntryBlock()) {
+      stream.defineLabel(blockLabels[block]);
+      stream.emit(Opcode::JUMPDEST);
+    }
+    for (auto &op : *block)
+      emitOp(op, stream);
+  }
+}
+
+void EVMEmitter::emitFunction(mlir::func::FuncOp func, BytecodeStream &stream) {
+  stackTracker.reset();
   llvm::ReversePostOrderTraversal<mlir::Region *> rpo(&func.getBody());
   for (auto *block : rpo)
-    emitBlock(*block);
+    emitBlock(*block, stream);
 }
 
-void EVMEmitter::emitBlock(mlir::Block &block) {
+void EVMEmitter::emitBlock(mlir::Block &block, BytecodeStream &stream) {
   stream.defineLabel(blockLabels[&block]);
   stream.emit(Opcode::JUMPDEST);
   for (auto &op : block)
-    emitOp(op);
+    emitOp(op, stream);
 }
 
-void EVMEmitter::emitOp(mlir::Operation &op) {
+void EVMEmitter::emitOp(mlir::Operation &op, BytecodeStream &stream) {
   if (auto brOp = mlir::dyn_cast<mlir::cf::BranchOp>(op))
-    return emitBranch(brOp);
+    return emitBranch(brOp, stream);
   if (auto condBrOp = mlir::dyn_cast<mlir::cf::CondBranchOp>(op))
-    return emitCondBranch(condBrOp);
+    return emitCondBranch(condBrOp, stream);
   if (auto returnOp = mlir::dyn_cast<mlir::func::ReturnOp>(op))
-    return emitReturn(returnOp);
+    return emitReturn(returnOp, stream);
   if (auto constOp = mlir::dyn_cast<mlir::arith::ConstantOp>(op))
-    return emitConstant(constOp);
+    return emitConstant(constOp, stream);
   if (auto callOp = mlir::dyn_cast<mlir::func::CallOp>(op))
-    return emitCall(callOp);
+    return emitCall(callOp, stream);
 
-  scheduleOperands(op);
+  scheduleOperands(op, stream);
   auto opcodeOpt = getOpcode(&op);
   if (!opcodeOpt)
     return;
@@ -82,12 +143,13 @@ void EVMEmitter::emitOp(mlir::Operation &op) {
   }
 }
 
-void EVMEmitter::scheduleOperands(mlir::Operation &op) {
-  for (auto operand : op.getOperands())
-    emitValue(operand, &op);
+void EVMEmitter::scheduleOperands(mlir::Operation &op, BytecodeStream &stream) {
+  for (auto operand : llvm::reverse(op.getOperands()))
+    emitValue(operand, &op, stream);
 }
 
-void EVMEmitter::emitValue(mlir::Value v, mlir::Operation *currentOp) {
+void EVMEmitter::emitValue(mlir::Value v, mlir::Operation *currentOp,
+                           BytecodeStream &stream) {
   auto it = layout.find(v);
   if (it == layout.end())
     return; // TODO: error handling
@@ -109,12 +171,12 @@ void EVMEmitter::emitValue(mlir::Value v, mlir::Operation *currentOp) {
     stream.emit(Opcode::MLOAD);
     stackTracker.push(v);
   } else if (std::holds_alternative<RecomputeLoc>(loc)) {
-    emitRecompute(std::get<RecomputeLoc>(loc).op);
+    emitRecompute(std::get<RecomputeLoc>(loc).op, stream);
   }
 }
 
-void EVMEmitter::emitRecompute(mlir::Operation *op) {
-  scheduleOperands(*op);
+void EVMEmitter::emitRecompute(mlir::Operation *op, BytecodeStream &stream) {
+  scheduleOperands(*op, stream);
 
   auto opcodeOpt = getOpcode(op);
   if (!opcodeOpt)
@@ -138,7 +200,7 @@ void EVMEmitter::emitRecompute(mlir::Operation *op) {
   }
 }
 
-void EVMEmitter::emitCall(mlir::func::CallOp &call) {
+void EVMEmitter::emitCall(mlir::func::CallOp &call, BytecodeStream &stream) {
   // Look up the callee function in the module.
   auto module = call->getParentOfType<mlir::ModuleOp>();
   auto callee = mlir::cast<mlir::func::FuncOp>(
@@ -146,7 +208,7 @@ void EVMEmitter::emitCall(mlir::func::CallOp &call) {
 
   auto operands = call.getOperands();
   for (auto operand : llvm::reverse(operands))
-    emitValue(operand, call);
+    emitValue(operand, call, stream);
 
   LabelID retLabel = stream.createLabel();
   stream.emitJumpTarget(retLabel);
@@ -161,7 +223,8 @@ void EVMEmitter::emitCall(mlir::func::CallOp &call) {
     stackTracker.push(result);
 }
 
-void EVMEmitter::emitConstant(mlir::arith::ConstantOp &constOp) {
+void EVMEmitter::emitConstant(mlir::arith::ConstantOp &constOp,
+                              BytecodeStream &stream) {
   auto intAttr = mlir::dyn_cast<mlir::IntegerAttr>(constOp.getValue());
   if (!intAttr)
     return; // TODO: error handling
@@ -170,36 +233,42 @@ void EVMEmitter::emitConstant(mlir::arith::ConstantOp &constOp) {
   stream.emitPush(value);
 }
 
-void EVMEmitter::emitBranch(mlir::cf::BranchOp &br) {
+void EVMEmitter::emitBranch(mlir::cf::BranchOp &br, BytecodeStream &stream) {
   for (auto arg : br.getDestOperands())
-    emitValue(arg, br);
+    emitValue(arg, br, stream);
 
   stream.emitJumpTarget(blockLabels[br.getDest()]);
   stream.emit(Opcode::JUMP);
 }
 
-void EVMEmitter::emitCondBranch(mlir::cf::CondBranchOp &condBr) {
-  emitValue(condBr.getCondition(), condBr);
+void EVMEmitter::emitCondBranch(mlir::cf::CondBranchOp &condBr,
+                                BytecodeStream &stream) {
+  emitValue(condBr.getCondition(), condBr, stream);
 
   for (auto arg : condBr.getTrueDestOperands())
-    emitValue(arg, condBr);
+    emitValue(arg, condBr, stream);
   stream.emitJumpTarget(blockLabels[condBr.getTrueDest()]);
   stream.emit(Opcode::JUMPI);
 
   for (auto arg : condBr.getFalseDestOperands())
-    emitValue(arg, condBr);
+    emitValue(arg, condBr, stream);
   stream.emitJumpTarget(blockLabels[condBr.getFalseDest()]);
   stream.emit(Opcode::JUMP);
 }
 
-void EVMEmitter::emitReturn(mlir::func::ReturnOp &ret) {
+void EVMEmitter::emitReturn(mlir::func::ReturnOp &ret, BytecodeStream &stream) {
   auto func = ret->getParentOfType<mlir::func::FuncOp>();
+  auto kindAttr = func->getAttrOfType<mlir::IntegerAttr>("evm.kind");
+  if (kindAttr && static_cast<evmlir::evm::FunctionKind>(kindAttr.getInt()) ==
+                      evmlir::evm::FunctionKind::Constructor)
+    return;
+
   auto visAttr = func->getAttrOfType<mlir::IntegerAttr>("evm.visibility");
   bool isInternal = static_cast<evmlir::evm::Visibility>(visAttr.getInt()) ==
                     evmlir::evm::Visibility::Internal;
 
   for (auto value : ret.getOperands())
-    emitValue(value, ret);
+    emitValue(value, ret, stream);
 
   if (isInternal) {
     uint8_t depth = ret.getNumOperands();

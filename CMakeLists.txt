@@ -32,4 +32,19 @@ add_definitions(${LLVM_DEFINITIONS})
 add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(tools)
+
+# revm-bridge: Rust static library wrapping revm for EVM execution in tests
+set(REVM_BRIDGE_DIR ${CMAKE_SOURCE_DIR}/revm-bridge)
+set(REVM_BRIDGE_LIB ${REVM_BRIDGE_DIR}/target/release/librevm_bridge.a)
+
+add_custom_target(revm_bridge_build
+  COMMAND cargo build --release
+  WORKING_DIRECTORY ${REVM_BRIDGE_DIR}
+  BYPRODUCTS ${REVM_BRIDGE_LIB}
+)
+
+add_library(revm_bridge STATIC IMPORTED GLOBAL)
+set_target_properties(revm_bridge PROPERTIES IMPORTED_LOCATION ${REVM_BRIDGE_LIB})
+add_dependencies(revm_bridge revm_bridge_build)
+
 add_subdirectory(test)

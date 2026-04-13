@@ -11,6 +11,11 @@
 #include "mlir/IR/RegionGraphTraits.h"
 #include "llvm/ADT/PostOrderIterator.h"
 
+struct EmittedContract {
+  std::vector<uint8_t> deployBytecode;
+  std::vector<uint8_t> runtimeBytecode;
+};
+
 class EVMEmitter {
 public:
   EVMEmitter(const mlir::DenseMap<mlir::Value, ValueLocation> &layout,
@@ -18,21 +23,28 @@ public:
              LivenessInfo &liveness)
       : layout(layout), stream(stream), liveness(liveness), spec(spec){};
 
-  std::vector<uint8_t> emitModule(mlir::ModuleOp module,
-                                  DispatcherStrategy &dispatcher);
+  EmittedContract emitModule(mlir::ModuleOp module,
+                             DispatcherStrategy &dispatcher);
 
 private:
-  void emitFunction(mlir::func::FuncOp func);
-  void emitBlock(mlir::Block &block);
-  void emitOp(mlir::Operation &op);
-  void emitCall(mlir::func::CallOp &call);
-  void emitBranch(mlir::cf::BranchOp &br);
-  void emitCondBranch(mlir::cf::CondBranchOp &condBr);
-  void emitReturn(mlir::func::ReturnOp &ret);
-  void emitConstant(mlir::arith::ConstantOp &constOp);
-  void emitValue(mlir::Value v, mlir::Operation *currentOp);
-  void emitRecompute(mlir::Operation *op);
-  void scheduleOperands(mlir::Operation &op);
+  void emitRuntime(mlir::ModuleOp module, BytecodeStream &stream,
+                   DispatcherStrategy &dispatcher);
+  void emitDeploy(mlir::ModuleOp module, BytecodeStream &stream,
+                  uint32_t runtimeSize);
+  void emitFunction(mlir::func::FuncOp func, BytecodeStream &stream);
+  void emitConstructor(mlir::func::FuncOp func, BytecodeStream &stream);
+  void emitBlock(mlir::Block &block, BytecodeStream &stream);
+  void emitOp(mlir::Operation &op, BytecodeStream &stream);
+  void emitCall(mlir::func::CallOp &call, BytecodeStream &stream);
+  void emitBranch(mlir::cf::BranchOp &br, BytecodeStream &stream);
+  void emitCondBranch(mlir::cf::CondBranchOp &condBr, BytecodeStream &stream);
+  void emitReturn(mlir::func::ReturnOp &ret, BytecodeStream &stream);
+  void emitConstant(mlir::arith::ConstantOp &constOp, BytecodeStream &stream);
+  void emitValue(mlir::Value v, mlir::Operation *currentOp,
+                 BytecodeStream &stream);
+  void emitRecompute(mlir::Operation *op, BytecodeStream &stream);
+  void scheduleOperands(mlir::Operation &op, BytecodeStream &stream);
+  mlir::func::FuncOp findConstructor(mlir::ModuleOp module);
 
   const mlir::DenseMap<mlir::Value, ValueLocation> &layout;
   mlir::DenseMap<mlir::Block *, LabelID> blockLabels;

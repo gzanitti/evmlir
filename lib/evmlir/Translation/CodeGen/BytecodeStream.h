@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <llvm-18/llvm/ADT/APInt.h>
+#include <sys/types.h>
 #include <unordered_map>
 #include <variant>
 #include <vector>
@@ -47,6 +48,7 @@ public:
   void emitJumpTarget(LabelID label);
   void defineLabel(LabelID label);
   std::vector<uint8_t> finalize();
+  uint32_t size() const;
 
 private:
   std::vector<Instruction> instructions;

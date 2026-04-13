@@ -10,6 +10,7 @@ public:
   void dup(uint8_t depth);
   void swap(uint8_t depth);
   uint8_t size() const;
+  void reset();
 
 private:
   llvm::SmallVector<mlir::Value> stack;

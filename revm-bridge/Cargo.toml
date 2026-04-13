@@ -1,0 +1,10 @@
+[package]
+name = "revm-bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+revm = { version = "19", default-features = false, features = ["std"] }

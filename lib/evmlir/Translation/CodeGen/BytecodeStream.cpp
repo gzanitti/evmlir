@@ -97,3 +97,5 @@ std::vector<uint8_t> BytecodeStream::finalize() {
 
   return bytecode;
 }
+
+uint32_t BytecodeStream::size() const { return instructions.size(); }

@@ -28,3 +28,5 @@ void StackTracker::swap(uint8_t depth) {
 }
 
 uint8_t StackTracker::size() const { return stack.size(); }
+
+void StackTracker::reset() { stack.clear(); }
