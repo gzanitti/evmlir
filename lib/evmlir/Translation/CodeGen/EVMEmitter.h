@@ -45,6 +45,7 @@ private:
   void emitRecompute(mlir::Operation *op, BytecodeStream &stream);
   void scheduleOperands(mlir::Operation &op, BytecodeStream &stream);
   mlir::func::FuncOp findConstructor(mlir::ModuleOp module);
+  mlir::func::FuncOp findFallback(mlir::ModuleOp module);
 
   const mlir::DenseMap<mlir::Value, ValueLocation> &layout;
   mlir::DenseMap<mlir::Block *, LabelID> blockLabels;

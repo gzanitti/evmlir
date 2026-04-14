@@ -3,23 +3,29 @@
 
 void BinarySearchDispatcher::emit(
     llvm::ArrayRef<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> entries,
-    BytecodeStream &stream) {
+    BytecodeStream &stream, std::optional<LabelID> fallback) {
   // Sort entries by selector for correctness.
   llvm::SmallVector<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> sorted(
       entries.begin(), entries.end());
   llvm::sort(sorted,
              [](auto &a, auto &b) { return std::get<0>(a) < std::get<0>(b); });
-  emitBinarySearch(sorted, stream);
+  emitBinarySearch(sorted, stream, fallback);
 }
 
 void BinarySearchDispatcher::emitBinarySearch(
     llvm::ArrayRef<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> entries,
-    BytecodeStream &stream) {
+    BytecodeStream &stream, std::optional<LabelID> fallback) {
 
   if (entries.empty()) {
-    stream.emitPush(uint32_t(0));
-    stream.emitPush(uint32_t(0));
-    stream.emit(Opcode::REVERT);
+    if (fallback) {
+      // stream.emit(Opcode::POP);
+      stream.emitJumpTarget(*fallback);
+      stream.emit(Opcode::JUMP);
+    } else {
+      stream.emitPush(uint32_t(0));
+      stream.emitPush(uint32_t(0));
+      stream.emit(Opcode::REVERT);
+    }
     return;
   }
 
@@ -72,11 +78,11 @@ void BinarySearchDispatcher::emitBinarySearch(
   stream.emitJumpTarget(rightLabel);
   stream.emit(Opcode::JUMPI);
 
-  emitBinarySearch(entries.slice(0, mid), stream);
+  emitBinarySearch(entries.slice(0, mid), stream, fallback);
 
   stream.defineLabel(rightLabel);
   stream.emit(Opcode::JUMPDEST);
-  emitBinarySearch(entries.slice(mid), stream);
+  emitBinarySearch(entries.slice(mid), stream, fallback);
 }
 
 void BinarySearchDispatcher::emitSelectorLoad(BytecodeStream &stream) {

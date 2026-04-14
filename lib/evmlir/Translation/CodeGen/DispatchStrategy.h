@@ -13,7 +13,7 @@ public:
 
   /// Emits the dispatch logic. Assumes the selector is already on top
   /// of the stack.
-  virtual void
-  emit(llvm::ArrayRef<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> entries,
-       BytecodeStream &stream) = 0;
+  virtual void emit(
+      llvm::ArrayRef<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> entries,
+      BytecodeStream &stream, std::optional<LabelID> fallback) = 0;
 };

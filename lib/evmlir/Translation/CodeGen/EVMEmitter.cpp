@@ -1,6 +1,7 @@
 
 #include "EVMEmitter.h"
 #include "BytecodeStream.h"
+#include "evmlir/Dialect/EVM/EVMDialect.h"
 #include <cstdint>
 
 static mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
@@ -94,9 +95,22 @@ mlir::func::FuncOp EVMEmitter::findConstructor(mlir::ModuleOp module) {
   return nullptr;
 }
 
+mlir::func::FuncOp EVMEmitter::findFallback(mlir::ModuleOp module) {
+  for (auto func : module.getOps<mlir::func::FuncOp>()) {
+    auto kindAttr = func->getAttrOfType<mlir::IntegerAttr>("evm.kind");
+    if (!kindAttr)
+      continue;
+    if (static_cast<evmlir::evm::FunctionKind>(kindAttr.getInt()) ==
+        evmlir::evm::FunctionKind::Fallback)
+      return func;
+  }
+  return nullptr;
+}
+
 void EVMEmitter::emitRuntime(mlir::ModuleOp module, BytecodeStream &stream,
                              DispatcherStrategy &dispatcher) {
   llvm::SmallVector<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> entries;
+  mlir::func::FuncOp fallbackFn;
 
   for (auto func : module.getOps<mlir::func::FuncOp>()) {
     // Pre-allocate labels for all blocks.
@@ -110,6 +124,9 @@ void EVMEmitter::emitRuntime(mlir::ModuleOp module, BytecodeStream &stream,
     if (visAttr && kindAttr && selAttr) {
       auto vis = static_cast<evmlir::evm::Visibility>(visAttr.getInt());
       auto kind = static_cast<evmlir::evm::FunctionKind>(kindAttr.getInt());
+      if (kind == evmlir::evm::FunctionKind::Fallback)
+        fallbackFn = func;
+
       if (vis == evmlir::evm::Visibility::External &&
           kind == evmlir::evm::FunctionKind::Function)
         entries.push_back({static_cast<uint32_t>(selAttr.getInt()),
@@ -117,8 +134,12 @@ void EVMEmitter::emitRuntime(mlir::ModuleOp module, BytecodeStream &stream,
     }
   }
 
+  std::optional<LabelID> fallbackLabel;
+  if (fallbackFn)
+    fallbackLabel = blockLabels[&fallbackFn.getBody().front()];
+
   dispatcher.emitSelectorLoad(stream);
-  dispatcher.emit(entries, stream);
+  dispatcher.emit(entries, stream, fallbackLabel);
 
   for (auto func : module.getOps<mlir::func::FuncOp>())
     emitFunction(func, stream);
