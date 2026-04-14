@@ -23,8 +23,8 @@ public:
              LivenessInfo &liveness)
       : layout(layout), stream(stream), liveness(liveness), spec(spec){};
 
-  EmittedContract emitModule(mlir::ModuleOp module,
-                             DispatcherStrategy &dispatcher);
+  mlir::FailureOr<EmittedContract> emitModule(mlir::ModuleOp module,
+                                              DispatcherStrategy &dispatcher);
 
 private:
   void emitRuntime(mlir::ModuleOp module, BytecodeStream &stream,

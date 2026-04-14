@@ -2,18 +2,20 @@
 #include "BinarySearchDispatcher.h"
 
 void BinarySearchDispatcher::emit(
-    llvm::ArrayRef<std::pair<uint32_t, LabelID>> entries,
+    llvm::ArrayRef<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> entries,
     BytecodeStream &stream) {
   // Sort entries by selector for correctness.
-  llvm::SmallVector<std::pair<uint32_t, LabelID>> sorted(entries.begin(),
-                                                         entries.end());
-  llvm::sort(sorted, [](auto &a, auto &b) { return a.first < b.first; });
+  llvm::SmallVector<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> sorted(
+      entries.begin(), entries.end());
+  llvm::sort(sorted,
+             [](auto &a, auto &b) { return std::get<0>(a) < std::get<0>(b); });
   emitBinarySearch(sorted, stream);
 }
 
 void BinarySearchDispatcher::emitBinarySearch(
-    llvm::ArrayRef<std::pair<uint32_t, LabelID>> entries,
+    llvm::ArrayRef<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> entries,
     BytecodeStream &stream) {
+
   if (entries.empty()) {
     stream.emitPush(uint32_t(0));
     stream.emitPush(uint32_t(0));
@@ -22,38 +24,56 @@ void BinarySearchDispatcher::emitBinarySearch(
   }
 
   if (entries.size() == 1) {
-    // Base case: one entry left, compare and jump or revert.
-    LabelID noMatch = stream.createLabel();
+    auto func = std::get<2>(entries[0]);
+    auto args = func.getArguments();
 
     stream.emit(Opcode::DUP1);
-    stream.emitPush(entries[0].first);
+    stream.emitPush(std::get<0>(entries[0]));
     stream.emit(Opcode::EQ);
-    stream.emitJumpTarget(entries[0].second);
-    stream.emit(Opcode::JUMPI);
 
-    stream.defineLabel(noMatch);
-    stream.emit(Opcode::JUMPDEST);
+    if (args.empty()) {
+      // Direct jump - No ABI decoding
+      stream.emitJumpTarget(std::get<1>(entries[0]));
+      stream.emit(Opcode::JUMPI);
+    } else {
+      LabelID matchLabel = stream.createLabel();
+      stream.emitJumpTarget(matchLabel);
+      stream.emit(Opcode::JUMPI);
+
+      stream.emitPush(uint32_t(0));
+      stream.emitPush(uint32_t(0));
+      stream.emit(Opcode::REVERT);
+
+      stream.defineLabel(matchLabel);
+      stream.emit(Opcode::JUMPDEST);
+
+      for (int i = args.size() - 1; i >= 0; --i) {
+        uint32_t offset = 4 + i * 32;
+        stream.emitPush(offset);
+        stream.emit(Opcode::CALLDATALOAD);
+      }
+
+      stream.emitJumpTarget(std::get<1>(entries[0]));
+      stream.emit(Opcode::JUMP);
+    }
+
     stream.emitPush(uint32_t(0));
     stream.emitPush(uint32_t(0));
     stream.emit(Opcode::REVERT);
     return;
   }
 
-  // Recursive case: split at midpoint.
   uint32_t mid = entries.size() / 2;
   LabelID rightLabel = stream.createLabel();
 
-  // Compare selector with mid entry's selector.
   stream.emit(Opcode::DUP1);
-  stream.emitPush(entries[mid].first);
-  stream.emit(Opcode::LT); // selector < mid.selector ?
+  stream.emitPush(std::get<0>(entries[mid]));
+  stream.emit(Opcode::LT);
   stream.emitJumpTarget(rightLabel);
-  stream.emit(Opcode::JUMPI); // if selector >= mid, go right
+  stream.emit(Opcode::JUMPI);
 
-  // Left half: selectors < mid.
   emitBinarySearch(entries.slice(0, mid), stream);
 
-  // Right half: selectors >= mid.
   stream.defineLabel(rightLabel);
   stream.emit(Opcode::JUMPDEST);
   emitBinarySearch(entries.slice(mid), stream);

@@ -10,8 +10,6 @@ class EVMDialect;
 
 namespace evmlir::evm {
 
-std::unique_ptr<mlir::Pass> createEVMCanonicalizePass();
-
 #define GEN_PASS_DECL
 #include "evmlir/Transforms/Passes.h.inc"
 

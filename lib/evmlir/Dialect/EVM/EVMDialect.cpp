@@ -1,6 +1,7 @@
 #include "evmlir/Dialect/EVM/EVMDialect.h"
 #include "evmlir/Dialect/EVM/EVMOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectImplementation.h"
 
 using namespace mlir;
@@ -25,11 +26,10 @@ EVMDialect::verifyOperationAttribute(mlir::Operation *op,
 
   auto visAttr = op->getAttrOfType<mlir::IntegerAttr>("evm.visibility");
   auto kindAttr = op->getAttrOfType<mlir::IntegerAttr>("evm.kind");
-  auto mutAttr = op->getAttrOfType<mlir::IntegerAttr>("evm.mutability");
 
-  if (!visAttr || !kindAttr || !mutAttr)
-    return op->emitOpError("EVM function must have evm.visibility, "
-                           "evm.kind and evm.mutability attributes");
+  if (!visAttr || !kindAttr)
+    return op->emitOpError("EVM function must have evm.visibility and "
+                           "evm.kind attributes");
 
   auto vis = static_cast<Visibility>(visAttr.getInt());
   auto kind = static_cast<FunctionKind>(kindAttr.getInt());
@@ -39,22 +39,6 @@ EVMDialect::verifyOperationAttribute(mlir::Operation *op,
       return op->emitOpError("internal function cannot have a selector");
     if (kind != FunctionKind::Function)
       return op->emitOpError("internal function must have kind 'function'");
-  }
-
-  if (kind == FunctionKind::Constructor || kind == FunctionKind::Fallback ||
-      kind == FunctionKind::Receive) {
-    if (vis != Visibility::External)
-      return op->emitOpError("constructor/fallback/receive must be external");
-  }
-
-  if (kind == FunctionKind::Fallback || kind == FunctionKind::Receive) {
-    if (func.getNumArguments() > 0)
-      return op->emitOpError("fallback/receive cannot have parameters");
-  }
-
-  if (kind == FunctionKind::Receive) {
-    if (func.getNumResults() > 0)
-      return op->emitOpError("receive cannot return values");
   }
 
   return mlir::success();

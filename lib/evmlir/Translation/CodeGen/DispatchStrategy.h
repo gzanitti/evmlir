@@ -1,6 +1,8 @@
 #include "BytecodeStream.h"
 #include <cstdint>
+#include <tuple>
 #include <llvm-18/llvm/ADT/ArrayRef.h>
+#include <mlir/Dialect/Func/IR/FuncOps.h>
 class DispatcherStrategy {
 public:
   virtual ~DispatcherStrategy() = default;
@@ -11,6 +13,7 @@ public:
 
   /// Emits the dispatch logic. Assumes the selector is already on top
   /// of the stack.
-  virtual void emit(llvm::ArrayRef<std::pair<uint32_t, LabelID>> entries,
-                    BytecodeStream &stream) = 0;
+  virtual void
+  emit(llvm::ArrayRef<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> entries,
+       BytecodeStream &stream) = 0;
 };

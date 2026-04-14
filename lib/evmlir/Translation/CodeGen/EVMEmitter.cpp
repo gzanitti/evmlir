@@ -3,8 +3,53 @@
 #include "BytecodeStream.h"
 #include <cstdint>
 
-EmittedContract EVMEmitter::emitModule(mlir::ModuleOp module,
-                                       DispatcherStrategy &dispatcher) {
+static mlir::LogicalResult verifyModule(mlir::ModuleOp module) {
+  mlir::func::FuncOp constructor;
+  mlir::func::FuncOp fallback;
+  bool failed = false;
+
+  module.walk([&](mlir::func::FuncOp func) {
+    auto kindAttr = func->getAttrOfType<mlir::IntegerAttr>("evm.kind");
+    if (!kindAttr)
+      return;
+
+    auto kind = static_cast<evmlir::evm::FunctionKind>(kindAttr.getInt());
+
+    if (kind == evmlir::evm::FunctionKind::Constructor) {
+      if (constructor) {
+        auto diag =
+            module.emitError("module contains more than one constructor");
+        diag.attachNote(constructor.getLoc())
+            << "first constructor '" << constructor.getName()
+            << "' defined here";
+        diag.attachNote(func.getLoc())
+            << "second constructor '" << func.getName() << "' defined here";
+        failed = true;
+      }
+      constructor = func;
+    }
+
+    if (kind == evmlir::evm::FunctionKind::Fallback) {
+      if (fallback) {
+        auto diag = module.emitError("module contains more than one fallback");
+        diag.attachNote(fallback.getLoc())
+            << "first fallback '" << fallback.getName() << "' defined here";
+        diag.attachNote(func.getLoc())
+            << "second fallback '" << func.getName() << "' defined here";
+        failed = true;
+      }
+      fallback = func;
+    }
+  });
+
+  return mlir::failure(failed);
+}
+mlir::FailureOr<EmittedContract>
+EVMEmitter::emitModule(mlir::ModuleOp module, DispatcherStrategy &dispatcher) {
+
+  if (mlir::failed(verifyModule(module)))
+    return mlir::failure();
+
   BytecodeStream runtimeStream;
   BytecodeStream deployStream;
   emitRuntime(module, runtimeStream, dispatcher);
@@ -12,7 +57,7 @@ EmittedContract EVMEmitter::emitModule(mlir::ModuleOp module,
   emitDeploy(module, deployStream, runtimeBytecode.size());
   auto deployBytecode = deployStream.finalize();
 
-  return {deployBytecode, runtimeBytecode};
+  return EmittedContract{deployBytecode, runtimeBytecode};
 }
 
 void EVMEmitter::emitDeploy(mlir::ModuleOp module, BytecodeStream &stream,
@@ -51,7 +96,7 @@ mlir::func::FuncOp EVMEmitter::findConstructor(mlir::ModuleOp module) {
 
 void EVMEmitter::emitRuntime(mlir::ModuleOp module, BytecodeStream &stream,
                              DispatcherStrategy &dispatcher) {
-  llvm::SmallVector<std::pair<uint32_t, LabelID>> entries;
+  llvm::SmallVector<std::tuple<uint32_t, LabelID, mlir::func::FuncOp>> entries;
 
   for (auto func : module.getOps<mlir::func::FuncOp>()) {
     // Pre-allocate labels for all blocks.
@@ -68,7 +113,7 @@ void EVMEmitter::emitRuntime(mlir::ModuleOp module, BytecodeStream &stream,
       if (vis == evmlir::evm::Visibility::External &&
           kind == evmlir::evm::FunctionKind::Function)
         entries.push_back({static_cast<uint32_t>(selAttr.getInt()),
-                           blockLabels[&func.getBody().front()]});
+                           blockLabels[&func.getBody().front()], func});
     }
   }
 

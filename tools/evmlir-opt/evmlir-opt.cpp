@@ -6,7 +6,6 @@
 #include "mlir/Transforms/Passes.h"
 
 #include "evmlir/Dialect/EVM/EVMDialect.h"
-#include "evmlir/Transforms/Passes.h"
 
 int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
@@ -15,10 +14,7 @@ int main(int argc, char **argv) {
   registry.insert<mlir::func::FuncDialect>();
   registry.insert<mlir::arith::ArithDialect>();
 
-  mlir::registerCanonicalizerPass();
   mlir::registerCSEPass();
-
-  evmlir::evm::registerEVMTransformsPasses();
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "evmlir optimizer driver\n", registry));
